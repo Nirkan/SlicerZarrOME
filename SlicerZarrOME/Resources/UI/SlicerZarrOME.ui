@@ -172,6 +172,12 @@
           <property name="minimum">
            <number>0</number>
           </property>
+          <property name="singleStep">
+           <number>1</number>
+          </property>
+          <property name="value">
+           <number>0</number>
+          </property>
          </widget>
         </item>
         <item>
@@ -199,7 +205,14 @@
       <item row="2" column="1">
        <layout class="QHBoxLayout" name="TimepointLayout">
         <item>
-         <widget class="QSpinBox" name="TimepointSpinBox"/>
+         <widget class="QSpinBox" name="TimepointSpinBox">
+          <property name="singleStep">
+           <number>1</number>
+          </property>
+          <property name="value">
+           <number>0</number>
+          </property>
+         </widget>
         </item>
         <item>
          <spacer name="TimepointSpacer">
