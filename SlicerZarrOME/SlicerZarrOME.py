@@ -292,13 +292,32 @@ class SlicerZarrOMEWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             # Connect and get metadata
             print("Attempting to connect to OME-Zarr dataset...")
             metadata = self.logic.connectToZarr(url)
-            
+
             # Update UI with metadata
             self.ui.dimensionsValue.text = metadata['dimensions']
             self.ui.channelsValue.text = str(metadata['channelCount'])
             self.ui.timepointsValue.text = str(metadata['timepointCount'])
             self.ui.resolutionLevelsValue.text = str(metadata['resolutionLevels'])
-            
+
+            # NEW: Display label information (if the UI has a labelsValue QLabel)
+            if hasattr(self.ui, "labelsValue"):
+                if metadata.get('hasLabels', False):
+                    label_count = metadata.get('labelCount', 0)
+                    label_names = metadata.get('labelNames', [])
+                    if label_count == 1:
+                        label_text = f"1 label: {label_names[0]}"
+                    elif label_count <= 3:
+                        label_text = f"{label_count} labels: {', '.join(label_names)}"
+                    else:
+                        label_text = f"{label_count} labels: {', '.join(label_names[:3])}..."
+                    self.ui.labelsValue.text = label_text
+                    self.ui.labelsValue.styleSheet = "color: green; font-weight: bold;"
+                else:
+                    self.ui.labelsValue.text = "No labels"
+                    self.ui.labelsValue.styleSheet = "color: gray;"
+            else:
+                print("INFO: labelsValue QLabel not found in UI; skipping label display.")
+
             # Populate resolution dropdown with actual dimensions
             self.ui.resolutionComboBox.clear()
             node = self.logic.nodes[0]  # Get the node to access data shapes
@@ -440,6 +459,10 @@ class SlicerZarrOMEWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.progressLabel.styleSheet = "color: gray; font-style: italic;"
         self.ui.loadProgressBar.visible = False
         
+        if hasattr(self.ui, "labelsValue"):
+            self.ui.labelsValue.text = "-"
+            self.ui.labelsValue.styleSheet = "color: gray;"
+        
 
 
 
@@ -485,8 +508,16 @@ class SlicerZarrOMELogic(ScriptedLoadableModuleLogic):
             data_shape = node.data[0].shape
             axes_info = self._parseAxesMetadata(node, data_shape)
             
+            # NEW: Detect labels
+            labels_info = self._detectLabels(url)
+            
             # Create final metadata
             metadata = self._buildMetadataResponse(data_shape, axes_info, node)
+            
+            # NEW: Add label information to metadata
+            metadata['hasLabels'] = labels_info['hasLabels']
+            metadata['labelCount'] = labels_info['labelCount']
+            metadata['labelNames'] = labels_info['labelNames']
             
             print(f"Successfully connected to OME-Zarr dataset")
             print(f"Final metadata: {metadata}")
@@ -495,7 +526,6 @@ class SlicerZarrOMELogic(ScriptedLoadableModuleLogic):
         except Exception as e:
             logging.error(f"Failed to connect to OME-Zarr: {e}")
             raise
-
 
     def _setupConnection(self, url):
         """Setup OME-Zarr reader and get nodes"""
@@ -650,6 +680,9 @@ class SlicerZarrOMELogic(ScriptedLoadableModuleLogic):
             print("Spatial axes summary:")
             for axis_name, info in spatial_axes.items():
                 print(f"  {axis_name.upper()}: size={info['size']}, unit='{info['unit']}'")
+
+
+        
 
     def _buildMetadataResponse(self, data_shape, axes_info, node):
         """Build the final metadata response dictionary"""
@@ -883,6 +916,55 @@ class SlicerZarrOMELogic(ScriptedLoadableModuleLogic):
         
         print(f"DEBUG: Volume node '{volumeName}' created successfully")
         return volumeNode
+
+    def _detectLabels(self, base_url: str):
+        """Detect labels by re-parsing the full dataset with Reader"""
+        labels_info = {
+            'hasLabels': False,
+            'labelCount': 0,
+            'labelNames': [],
+            'labelPaths': []
+        }
+        try:
+            # Reader and parse_url are set as globals by ensureOMEZarrAvailable()
+            from ome_zarr.reader import Label  # import spec locally
+
+            reader = Reader(parse_url(base_url))
+            all_nodes = list(reader())
+            print(f"DEBUG: Total nodes found: {len(all_nodes)}")
+
+            # Filter label nodes
+            label_nodes = [
+                node for node in all_nodes
+                if hasattr(node, "specs") and any(isinstance(spec, Label) for spec in node.specs)
+            ]
+            print(f"DEBUG: Label nodes found: {len(label_nodes)}")
+
+            if label_nodes:
+                labels_info['hasLabels'] = True
+                labels_info['labelCount'] = len(label_nodes)
+                for node in label_nodes:
+                    # Prefer metadata 'name'
+                    name = None
+                    if hasattr(node, "metadata") and isinstance(node.metadata, dict):
+                        name = node.metadata.get("name")
+                    # Fallback to last path segment
+                    if not name:
+                        path_str = str(getattr(node, "path", "")).strip("/")
+                        name = path_str.split("/")[-1] if path_str else f"label_{len(labels_info['labelNames'])}"
+                    labels_info['labelNames'].append(name)
+                    labels_info['labelPaths'].append(str(getattr(node, "path", "")))
+                    print(f"DEBUG: Label detected - name='{name}', path='{getattr(node, 'path', '')}'")
+
+                print(f"✅ Found {labels_info['labelCount']} label(s): {labels_info['labelNames']}")
+            else:
+                print("ℹ️ No labels found in dataset")
+
+            self.labels_info = labels_info
+        except Exception as e:
+            print(f"WARNING: Failed to detect labels: {e}")
+            import traceback; traceback.print_exc()
+        return labels_info
 
 
 #
