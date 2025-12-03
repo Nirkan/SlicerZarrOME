@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>400</width>
-    <height>586</height>
+    <height>700</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -291,6 +291,87 @@
          </widget>
         </item>
        </layout>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="ctkCollapsibleButton" name="loadLabelsCollapsibleButton">
+     <property name="enabled">
+      <bool>false</bool>
+     </property>
+     <property name="text">
+      <string>Load Labels</string>
+     </property>
+     <layout class="QVBoxLayout" name="loadLabelsLayout">
+      <item>
+       <widget class="QLabel" name="labelsInstructionLabel">
+        <property name="text">
+         <string>Select labels to load with their resolution levels:</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+        <property name="styleSheet">
+         <string>color: gray; font-style: italic;</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QScrollArea" name="labelsScrollArea">
+        <property name="widgetResizable">
+         <bool>true</bool>
+        </property>
+        <property name="minimumHeight">
+         <number>100</number>
+        </property>
+        <property name="maximumHeight">
+         <number>200</number>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::StyledPanel</enum>
+        </property>
+        <widget class="QWidget" name="labelsScrollAreaContents">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>0</y>
+           <width>380</width>
+           <height>180</height>
+          </rect>
+         </property>
+         <layout class="QVBoxLayout" name="labelsCheckboxLayout">
+          <property name="spacing">
+           <number>6</number>
+          </property>
+          <property name="leftMargin">
+           <number>5</number>
+          </property>
+          <property name="topMargin">
+           <number>5</number>
+          </property>
+          <property name="rightMargin">
+           <number>5</number>
+          </property>
+          <property name="bottomMargin">
+           <number>5</number>
+          </property>
+         </layout>
+        </widget>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="loadSelectedLabelsButton">
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
+        <property name="toolTip">
+         <string>Load selected labels into 3D Slicer</string>
+        </property>
+        <property name="text">
+         <string>Load Selected Labels</string>
+        </property>
+       </widget>
       </item>
      </layout>
     </widget>

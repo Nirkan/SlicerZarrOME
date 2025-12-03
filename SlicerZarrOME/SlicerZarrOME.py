@@ -9,6 +9,7 @@ import os
 from typing import Annotated
 
 import vtk
+import qt
 import numpy
 
 import slicer
@@ -197,6 +198,8 @@ class SlicerZarrOMEWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # OME-Zarr specific button connections
         self.ui.connectButton.connect("clicked(bool)", self.onConnectClicked)
         self.ui.loadButton.connect("clicked(bool)", self.onLoadClicked)
+        if hasattr(self.ui, "loadSelectedLabelsButton"):
+            self.ui.loadSelectedLabelsButton.connect("clicked(bool)", self.onLoadLabelsClicked)
         
         # URL input connection
         self.ui.urlLineEdit.connect("textChanged(QString)", self.onUrlChanged)
@@ -317,6 +320,9 @@ class SlicerZarrOMEWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     self.ui.labelsValue.styleSheet = "color: gray;"
             else:
                 print("INFO: labelsValue QLabel not found in UI; skipping label display.")
+
+            # Populate label checkboxes if labels are available
+            self.populateLabelCheckboxes()  # NEW LINE
 
             # Populate resolution dropdown with actual dimensions
             self.ui.resolutionComboBox.clear()
@@ -464,8 +470,173 @@ class SlicerZarrOMEWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.ui.labelsValue.styleSheet = "color: gray;"
         
 
+    def onLoadLabelsClicked(self):
+        """Handle Load Selected Labels button click."""
+        if not hasattr(self, 'labelCheckboxes'):
+            print("ERROR: No label checkboxes available")
+            return
+        
+        # Collect selected labels with their zoom levels
+        selected_labels = []
+        for label_name, (checkbox, zoom_combo) in self.labelCheckboxes.items():
+            if checkbox.checked:
+                zoom_text = zoom_combo.currentText
+                # Parse zoom level (Auto -> -1, Level 0 -> 0, Level 1 -> 1, etc.)
+                if zoom_text == "Auto":
+                    zoom_level = -1
+                else:
+                    try:
+                        zoom_level = int(zoom_text.split()[-1])
+                    except:
+                        zoom_level = -1
+                
+                selected_labels.append((label_name, zoom_level))
+        
+        if not selected_labels:
+            slicer.util.warningDisplay("No labels selected. Please check at least one label.")
+            return
+        
+        print(f"DEBUG: Loading {len(selected_labels)} selected labels")
+        
+        # Disable button during loading
+        self.ui.loadSelectedLabelsButton.enabled = False
+        self.ui.loadSelectedLabelsButton.text = "Loading..."
+        
+        try:
+            # Load each selected label
+            for label_name, zoom_level in selected_labels:
+                print(f"DEBUG: Loading label '{label_name}' at zoom level {zoom_level}")
+                success = self.logic.loadLabelData(label_name, zoom_level)
+                if success:
+                    print(f"INFO: Successfully loaded label: {label_name}")
+                else:
+                    print(f"WARNING: Failed to load label: {label_name}")
+            
+            slicer.util.infoDisplay(f"Successfully loaded {len(selected_labels)} label(s)")
+        except Exception as e:
+            error_msg = f"Error loading labels: {str(e)}"
+            print(f"ERROR: {error_msg}")
+            slicer.util.errorDisplay(error_msg)
+        finally:
+            # Re-enable button
+            self.ui.loadSelectedLabelsButton.enabled = True
+            self.ui.loadSelectedLabelsButton.text = "Load Selected Labels"
 
+    def populateLabelCheckboxes(self):
+        """Populate the labels checkbox list with detected labels."""
+        # Get the container widget inside the scroll area
+        contents = None
+        if hasattr(self.ui, 'labelsScrollArea') and self.ui.labelsScrollArea:
+            contents = self.ui.labelsScrollArea.widget()  # the contents widget
+        if contents is None and hasattr(self.ui, 'labelsScrollAreaContents'):
+            contents = self.ui.labelsScrollAreaContents  # fallback by object name
 
+        if contents is None:
+            print("ERROR: labelsScrollArea contents not found")
+            return
+
+        # Get or create the vertical layout on the contents widget
+        layout = contents.layout()
+        if layout is None:
+            layout = qt.QVBoxLayout(contents)
+            layout.setObjectName("labelsCheckboxLayout")
+            contents.setLayout(layout)
+
+        # Clear existing rows
+        while layout.count() > 0:
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+            else:
+                nested = item.layout()
+                if nested:
+                    while nested.count() > 0:
+                        nitem = nested.takeAt(0)
+                        nw = nitem.widget()
+                        if nw:
+                            nw.deleteLater()
+
+        # Get metadata from logic
+        metadata = getattr(self.logic, 'metadata', None)
+        if not metadata or not metadata.get('hasLabels', False):
+            no_labels_label = qt.QLabel("No labels available in this dataset")
+            no_labels_label.styleSheet = "color: gray; font-style: italic;"
+            layout.addWidget(no_labels_label)
+            if hasattr(self.ui, 'loadLabelsCollapsibleButton'):
+                self.ui.loadLabelsCollapsibleButton.enabled = False
+            return
+
+        # Store checkbox/combobox pairs
+        self.labelCheckboxes = {}
+        label_names = metadata.get('labelNames', [])
+        print(f"DEBUG: Populating {len(label_names)} label checkboxes")
+
+        for label_name in label_names:
+            row_layout = qt.QHBoxLayout()
+            row_layout.setSpacing(10)
+
+            checkbox = qt.QCheckBox(label_name)
+            checkbox.checked = False
+            checkbox.setToolTip(f"Select to load label: {label_name}")
+            checkbox.stateChanged.connect(self.onLabelCheckboxChanged)
+
+            zoom_combo = qt.QComboBox()
+            zoom_combo.setToolTip(f"Select resolution level for {label_name}")
+            zoom_combo.setMinimumWidth(120)
+
+            resolution_count = self._getLabelResolutionCount(label_name)
+            zoom_combo.addItem("Auto")
+            for level in range(resolution_count):
+                zoom_combo.addItem(f"Level {level}")
+            zoom_combo.setCurrentIndex(0)
+
+            row_layout.addWidget(checkbox)
+            row_layout.addWidget(zoom_combo)
+            row_layout.addStretch()
+
+            layout.addLayout(row_layout)
+            self.labelCheckboxes[label_name] = (checkbox, zoom_combo)
+
+        layout.addStretch()
+
+        if hasattr(self.ui, 'loadLabelsCollapsibleButton'):
+            self.ui.loadLabelsCollapsibleButton.enabled = True
+
+        print(f"DEBUG: Successfully created {len(self.labelCheckboxes)} label checkbox rows")
+
+    def _getLabelResolutionCount(self, label_name):
+        """Get the number of resolution levels for a specific label."""
+        try:
+            if not self.logic.metadata:
+                return 1
+            
+            label_names = self.logic.metadata.get('labelNames', [])
+            label_nodes = self.logic.metadata.get('labelNodes', [])
+            
+            if label_name in label_names:
+                label_index = label_names.index(label_name)
+                label_node = label_nodes[label_index]
+                
+                if hasattr(label_node, 'data') and isinstance(label_node.data, list):
+                    return len(label_node.data)
+        except Exception as e:
+            print(f"WARNING: Could not get resolution count for {label_name}: {e}")
+        
+        # Fallback
+        return self.logic.metadata.get('resolutionLevels', 1) if self.logic.metadata else 1
+
+    def onLabelCheckboxChanged(self):
+        """Update the Load Selected Labels button state based on checkbox selections."""
+        if not hasattr(self, 'labelCheckboxes'):
+            return
+        
+        # Check if any checkboxes are checked
+        any_checked = any(checkbox.checked for checkbox, _ in self.labelCheckboxes.values())
+        
+        # Enable/disable the button
+        if hasattr(self.ui, 'loadSelectedLabelsButton'):
+            self.ui.loadSelectedLabelsButton.enabled = any_checked
     
 
 
@@ -518,9 +689,11 @@ class SlicerZarrOMELogic(ScriptedLoadableModuleLogic):
             metadata['hasLabels'] = labels_info['hasLabels']
             metadata['labelCount'] = labels_info['labelCount']
             metadata['labelNames'] = labels_info['labelNames']
-            
+            metadata['labelNodes'] = labels_info['labelNodes']  # ADD THIS LINE
+
+            self.metadata = metadata  # ADD THIS LINE
+
             print(f"Successfully connected to OME-Zarr dataset")
-            print(f"Final metadata: {metadata}")
             return metadata
             
         except Exception as e:
@@ -923,7 +1096,7 @@ class SlicerZarrOMELogic(ScriptedLoadableModuleLogic):
             'hasLabels': False,
             'labelCount': 0,
             'labelNames': [],
-            'labelPaths': []
+            'labelNodes': []  # THIS IS ALL WE NEED - the actual node objects!
         }
         try:
             # Reader and parse_url are set as globals by ensureOMEZarrAvailable()
@@ -943,18 +1116,24 @@ class SlicerZarrOMELogic(ScriptedLoadableModuleLogic):
             if label_nodes:
                 labels_info['hasLabels'] = True
                 labels_info['labelCount'] = len(label_nodes)
+                
                 for node in label_nodes:
-                    # Prefer metadata 'name'
+                    # Get name from metadata
                     name = None
                     if hasattr(node, "metadata") and isinstance(node.metadata, dict):
                         name = node.metadata.get("name")
-                    # Fallback to last path segment
+                
+                    # Fallback name
                     if not name:
-                        path_str = str(getattr(node, "path", "")).strip("/")
-                        name = path_str.split("/")[-1] if path_str else f"label_{len(labels_info['labelNames'])}"
+                        name = f"label_{len(labels_info['labelNames'])}"
+                
+                    # Store name and node object
                     labels_info['labelNames'].append(name)
-                    labels_info['labelPaths'].append(str(getattr(node, "path", "")))
-                    print(f"DEBUG: Label detected - name='{name}', path='{getattr(node, 'path', '')}'")
+                    labels_info['labelNodes'].append(node)  # Store the whole node!
+                
+                    print(f"DEBUG: Label detected - name='{name}'")
+                    print(f"DEBUG: Node has data: {hasattr(node, 'data')}")
+                    print(f"DEBUG: Node has metadata: {hasattr(node, 'metadata')}")
 
                 print(f"✅ Found {labels_info['labelCount']} label(s): {labels_info['labelNames']}")
             else:
@@ -964,7 +1143,93 @@ class SlicerZarrOMELogic(ScriptedLoadableModuleLogic):
         except Exception as e:
             print(f"WARNING: Failed to detect labels: {e}")
             import traceback; traceback.print_exc()
+    
         return labels_info
+
+    def loadLabelData(self, label_name, zoom_level=-1):
+        """Load label data from the OME-Zarr dataset."""
+        if not hasattr(self, 'metadata') or not self.metadata.get('hasLabels', False):
+            print("ERROR: No labels available in dataset")
+            return False
+        
+        label_names = self.metadata.get('labelNames', [])
+        label_nodes = self.metadata.get('labelNodes', [])
+        
+        if label_name not in label_names:
+            print(f"ERROR: Label '{label_name}' not found in dataset")
+            return False
+        
+        label_index = label_names.index(label_name)
+        label_node = label_nodes[label_index]
+        
+        if not hasattr(label_node, 'data'):
+            print(f"ERROR: Label node has no data attribute")
+            return False
+        
+        num_resolutions = len(label_node.data) if isinstance(label_node.data, list) else 1
+        
+        if zoom_level == -1:
+            zoom_level = num_resolutions - 1
+            print(f"DEBUG: Auto-selected zoom level {zoom_level}")
+        
+        if zoom_level >= num_resolutions:
+            zoom_level = 0
+        
+        try:
+            if isinstance(label_node.data, list):
+                label_array = label_node.data[zoom_level]
+            else:
+                label_array = label_node.data
+            
+            import numpy as np
+            label_data = np.array(label_array)
+            
+            while label_data.ndim > 3:
+                label_data = label_data[0]
+            
+            segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLSegmentationNode", 
+                f"Label_{label_name}"
+            )
+            
+            labelmap_node = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLLabelMapVolumeNode", 
+                f"LabelMap_{label_name}_temp"
+            )
+            
+            slicer.util.updateVolumeFromArray(labelmap_node, label_data)
+            
+            slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(
+                labelmap_node, 
+                segmentation_node
+            )
+            
+            slicer.mrmlScene.RemoveNode(labelmap_node)
+            
+            # Create 3D surface representation
+            segmentation_node.CreateClosedSurfaceRepresentation()
+
+            # Enable 3D display
+            displayNode = segmentation_node.GetDisplayNode()
+            if displayNode:
+                displayNode.SetVisibility(True)
+                displayNode.SetVisibility3D(True)
+                displayNode.SetVisibility2DFill(True)
+                displayNode.SetVisibility2DOutline(True)
+                displayNode.SetOpacity3D(0.6)
+                displayNode.SetOpacity2DFill(0.5)
+                print(f"DEBUG: Enabled 3D display for '{label_name}'")
+            else:
+                print(f"WARNING: Display node not found for segmentation node '{label_name}'")
+            
+            print(f"INFO: Successfully loaded label '{label_name}'")
+            return True
+            
+        except Exception as e:
+            print(f"ERROR: Failed to load label '{label_name}': {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
 
 #
